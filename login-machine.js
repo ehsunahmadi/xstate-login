@@ -1,16 +1,21 @@
 import { createMachine, interpret, assign } from "xstate";
+import regeneratorRuntime from "regenerator-runtime";
 
-const randomFetch = () => {
-  return new Promise((res, rej) => {
-    setTimeout(() => {
-      if (Math.random() < 0.5) {
-        rej("Fetch failed!");
-      } else {
-        res("Fetch succeeded!");
-      }
-    }, 2000);
+const randomFetch = fetch("https://jsonplaceholder.typicode.com/posts", {
+  method: "POST",
+  body: JSON.stringify({
+    title: "foo",
+    body: "bar",
+    userId: 1,
+  }),
+  headers: {
+    "Content-type": "application/json; charset=UTF-8",
+  },
+})
+  .then((response) => response.json())
+  .then((json) => {
+    return json;
   });
-};
 
 const authMachine = createMachine(
   {
@@ -66,7 +71,14 @@ const authMachine = createMachine(
           checkingCode: {
             invoke: {
               src: "randomFetch",
-              onDone: "enterNickname",
+              onDone: [
+                {
+                  target: "enterNickname",
+                  actions: "onCodeSuccess",
+                  cond: "notRegistered",
+                },
+                { target: "loggingIn" },
+              ],
               onError: "enterNickname",
             },
           },
@@ -78,7 +90,7 @@ const authMachine = createMachine(
           registering: {
             invoke: {
               src: "randomFetch",
-              onDone: "loggingIn",
+              onDone: { target: "loggingIn", actions: "onRegister" },
               onError: "loggingIn",
             },
           },
@@ -99,8 +111,14 @@ const authMachine = createMachine(
   },
   {
     services: {
-      randomFetch: () => {
-        return randomFetch;
+      randomFetch: async () => {
+        return await randomFetch;
+      },
+      checkCode: async (context, event) => {
+        const res = await Api.invoke("post", "/core/v1/auth/requestCode", {
+          mobileNumber: event.mobileNumber,
+        });
+        return res;
       },
     },
     actions: {
@@ -109,15 +127,23 @@ const authMachine = createMachine(
       })),
       setCode: assign((context, event) => ({
         code: event.payload.code,
-        authToken: event.payload.authToken,
       })),
       setNickname: assign((context, event) => ({
         nickname: event.payload.nickname,
+      })),
+      onCodeSuccess: assign((context, event) => ({
+        authToken: event.data.title,
+      })),
+      onRegister: assign((context, event) => ({
+        authToken: event.data.body,
       })),
     },
     guards: {
       isAuthorized: (context, event) => {
         return JSON.parse(!!localStorage.getItem("refreshToken"));
+      },
+      notRegistered: (context, event) => {
+        return event.data.userId === 1;
       },
     },
   }
@@ -143,7 +169,6 @@ setTimeout(() => {
     type: "CHECK_CODE",
     payload: {
       code: "12345",
-      authToken: "agfuyt2i23r78",
     },
   });
 }, 3000);
